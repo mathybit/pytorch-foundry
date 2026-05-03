@@ -1,0 +1,25 @@
+# Conda environment for pytorch-foundry
+#
+# One-time global config (run once per machine before creating the environment):
+#   conda config --add channels conda-forge
+#   conda config --set channel_priority strict
+#
+# Create:  conda env create -f conda/environment.yml
+# Update:  conda env update -f conda/environment.yml --prune
+# Activate: conda activate foundry
+
+name: foundry
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.14
+  - pip
+
+# After creating the environment, install pip dependencies:
+#   pip install -r conda/requirements.txt
+#
+# The install PyTorch (and torchvision) separately after activating the environment.
+# See README.md for the install command.
