@@ -83,7 +83,7 @@ class Time2Vec(nn.Module):
         self.output_dim = output_dim
 
         # First output component is linear -> weight + bias
-        self.lin_w = nn.Parameter(torch.randn(input_dim) * 0.02)
+        self.lin_w = nn.Parameter(torch.randn(input_dim, 1) * 0.02)
         self.lin_b = nn.Parameter(torch.zeros(1))
 
         # Remaining components are sinusoidal -> weight + bias
@@ -93,7 +93,7 @@ class Time2Vec(nn.Module):
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
         """Transform temporal features. t: (..., input_dim)."""
-        lin = t @ self.lin_w.T + self.lin_b
+        lin = (t @ self.lin_w).squeeze(-1).unsqueeze(-1)
         sin = torch.sin(t @ self.sin_w.T + self.sin_b)
         return torch.cat([lin, sin], dim=-1)
 
@@ -119,7 +119,7 @@ class CausalConv1d(nn.Module):
         dilation: int = 1,
     ) -> None:
         super().__init__()
-        pad = kernel_size + (kernel_size - 1) * (dilation - 1) - 1
+        pad = (kernel_size - 1) * dilation
         self.pad = nn.ConstantPad1d((pad, 0), 0.0)
         self.conv = nn.Conv1d(in_channels, out_channels, kernel_size, dilation=dilation)
 

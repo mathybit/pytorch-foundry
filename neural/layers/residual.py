@@ -33,7 +33,15 @@ class SimpleResidualBlock(nn.Module):
         super().__init__()
         self.conv1 = conv(channels, channels, kernel_size, padding="same")
         self.conv2 = conv(channels, channels, kernel_size, padding="same")
-        self.activation = activation
+        if isinstance(activation, str):
+            act_map = {
+                "relu": nn.ReLU,
+                "prelu": lambda: nn.PReLU(num_parameters=channels),
+                "leaky_relu": lambda: nn.LeakyReLU(negative_slope=0.2),
+            }
+            self.activation = act_map[activation]() if activation in act_map else None
+        else:
+            self.activation = activation
         self.channels = channels
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -71,7 +79,7 @@ class ResidualBlock(nn.Module):
             "none": None,
         }
 
-        conv_nd = conv(3)
+        conv_nd = conv(1, 1, 3)
         ndim = type(conv_nd).__name__.replace("Conv", "")
         ndim_lower = ndim.lower()
 
@@ -135,7 +143,7 @@ class BottleneckResidualBlock(nn.Module):
         bottleneck_channels = channels // reduction
 
         # Choose normalization
-        conv_nd = conv(3)
+        conv_nd = conv(1, 1, 3)
         ndim = type(conv_nd).__name__.replace("Conv", "").lower()
         norm_map = {
             "batch": {"1d": nn.BatchNorm1d, "2d": nn.BatchNorm2d, "3d": nn.BatchNorm3d},
@@ -149,6 +157,7 @@ class BottleneckResidualBlock(nn.Module):
             self.norm1 = nn.Identity()
             self.norm2 = nn.Identity()
 
+        # TODO: instead of creating instances here, use if/else logic
         act_map = {
             "relu": lambda: nn.ReLU(),
             "prelu": lambda: nn.PReLU(num_parameters=bottleneck_channels),
@@ -209,6 +218,7 @@ class ResidualStack(nn.Module):
         block_classes = {
             "simple": SimpleResidualBlock,
             "srgan": ResidualBlock,
+            "preact": ResidualBlock,
             "bottleneck": BottleneckResidualBlock,
         }
         BlockClass = block_classes[block_type]

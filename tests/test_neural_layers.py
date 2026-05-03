@@ -244,7 +244,7 @@ class TestResidualBlock:
         assert out.shape == x.shape
 
     def test_params(self):
-        block = ResidualBlock(64, residual_channels=64, norm="batch", activation="relu")
+        block = ResidualBlock(channels=64, norm="batch", activation="relu")
         assert hasattr(block, "conv1")
         assert hasattr(block, "conv2")
         assert hasattr(block, "norm1")
@@ -254,13 +254,13 @@ class TestResidualBlock:
 
 class TestBottleneckResidualBlock:
     def test_output_shape(self):
-        block = BottleneckResidualBlock(64, expansion=2)
+        block = BottleneckResidualBlock(channels=64, reduction=2)
         x = torch.randn(4, 64, 28, 28)
         out = block(x)
         assert out.shape == x.shape
 
     def test_bottleneck_channels(self):
-        block = BottleneckResidualBlock(64, residual_channels=32, expansion=2)
+        block = BottleneckResidualBlock(channels=64, reduction=2)
         x = torch.randn(4, 64, 28, 28)
         out = block(x)
         assert out.shape == x.shape
@@ -367,13 +367,14 @@ class TestCrossChannelPooling2d:
         pool = CrossChannelPooling2d()
         x = torch.randn(4, 64, 28, 28)
         out = pool(x)
-        assert out.shape == (4, 2, 1, 1)
+        # Non-trainable: mean/std across channels at each spatial position
+        assert out.shape == (4, 2, 28, 28)
 
-    def test_learnable(self):
-        pool = CrossChannelPooling2d(channels=64, learnable=True)
+    def test_trainable(self):
+        pool = CrossChannelPooling2d(channels=64, trainable=True)
         x = torch.randn(4, 64, 28, 28)
         out = pool(x)
-        assert out.shape == (4, 2, 1, 1)
+        assert out.shape == (4, 2, 28, 28)
         assert hasattr(pool, "weight")
         assert pool.weight.requires_grad
 
@@ -381,11 +382,11 @@ class TestCrossChannelPooling2d:
         pool = CrossChannelPool2d()
         x = torch.randn(4, 64, 28, 28)
         out = pool(x)
-        assert out.shape == (4, 2, 1, 1)
+        assert out.shape == (4, 2, 28, 28)
 
-    def test_learnable_requires_channels(self):
+    def test_trainable_requires_channels(self):
         with pytest.raises(ValueError, match="channels is required"):
-            CrossChannelPooling2d(learnable=True)
+            CrossChannelPooling2d(trainable=True)
 
 
 # ---------- Activation Layers ----------
@@ -438,12 +439,12 @@ class TestSwish:
         out = act(x)
         assert out.shape == x.shape
 
-    def test_learnable_beta(self):
-        act = Swish(learnable=True)
+    def test_trainable_beta(self):
+        act = Swish(trainable=True)
         assert act.beta.requires_grad
 
     def test_fixed_beta(self):
-        act = Swish(learnable=False, beta=1.0)
+        act = Swish(trainable=False, beta=1.0)
         assert not act.beta.requires_grad
 
 
@@ -502,7 +503,7 @@ class TestSiLU:
 
     def test_same_as_swish_1(self):
         act_silu = SiLU()
-        act_swish = Swish(learnable=False, beta=1.0)
+        act_swish = Swish(trainable=False, beta=1.0)
         x = torch.randn(4, 64, 28, 28)
         assert torch.allclose(act_silu(x), act_swish(x))
 
@@ -517,8 +518,9 @@ class TestActivation:
     def test_case_insensitive(self):
         act1 = Activation("relu")
         act2 = Activation("ReLU")
-        out1 = act1(torch.randn(4, 64, 4, 4))
-        out2 = act2(torch.randn(4, 64, 4, 4))
+        x = torch.randn(4, 64, 4, 4)
+        out1 = act1(x)
+        out2 = act2(x)
         assert torch.allclose(out1, out2)
 
     def test_unknown_type(self):
@@ -530,7 +532,7 @@ class TestActivation:
             Activation("relu", alpha=0.1)
 
     def test_swish(self):
-        act = Activation("swish", learnable=False, beta=1.0)
+        act = Activation("swish", trainable=False, beta=1.0)
         x = torch.randn(4, 64, 4, 4)
         out = act(x)
         assert out.shape == x.shape
@@ -646,10 +648,10 @@ class TestTime2Vec:
         t2v = Time2Vec(input_dim=1, output_dim=64)
         t = torch.tensor([[[0.0]], [[1.0]], [[2.0]]])
         out = t2v(t)
-        # First component should be linear
+        # First component should be linear: w*t + phi
         first = out[..., 0]
         diffs = first[1:] - first[:-1]
-        assert diffs[0] != diffs[1]  # at least not perfectly constant
+        assert torch.allclose(diffs[0], diffs[1])  # linear → constant diffs
 
 
 class TestCausalConv1d:
@@ -669,7 +671,9 @@ class TestCausalConv1d:
         x_padded[:, :, -16:] = x[:, :, -16:]
         out_full = conv(x)
         out_padded = conv(x_padded)
-        assert out_full[:, :, 16:] == out_padded[:, :, 16:]
+        # Output[j] depends on input[j-pad], input[j-pad+1], input[j-pad+2]
+        # With pad=2, need j-2 >= 16 → j >= 18 for full receptive field in non-zero region
+        assert torch.equal(out_full[:, :, 18:], out_padded[:, :, 18:])
 
     def test_dilation(self):
         conv = CausalConv1d(64, 128, kernel_size=3, dilation=2)
@@ -786,10 +790,10 @@ class TestClassificationHead:
         out = head(x)
         assert out.shape == (4, 10)
 
-    def test_intermediate(self):
+    def test_embedding(self):
         head = ClassificationHead(512, 256, n_classes=10)
         x = torch.randn(4, 512)
-        emb = head(x, intermediate=True)
+        emb = head(x, embedding=True)
         assert emb.shape == (4, 256)
 
     def test_binary(self):
@@ -817,10 +821,10 @@ class TestRegressionHead:
         out = head(x)
         assert out.shape == (4, 1)
 
-    def test_intermediate(self):
+    def test_embedding(self):
         head = RegressionHead(512, 256)
         x = torch.randn(4, 512)
-        emb = head(x, intermediate=True)
+        emb = head(x, embedding=True)
         assert emb.shape == (4, 256)
 
     def test_different_activations(self):

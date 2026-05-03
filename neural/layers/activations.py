@@ -29,7 +29,8 @@ class Scaling(nn.Module):
         self.scale = nn.Parameter(torch.full((channels,), init))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        shape = [self.scale.size(0)] + [1] * (x.dim() - 1)
+        shape = [1] * x.dim()
+        shape[1] = self.scale.size(0)
         return x * self.scale.view(shape)
 
 
@@ -58,15 +59,15 @@ class Swish(nn.Module):
     Example::
 
         # Learnable beta (default)
-        swish = Swish(learnable=True)
+        swish = Swish(trainable=True)
 
         # Fixed beta (SiLU)
-        silu = Swish(learnable=False, beta=1.0)
+        silu = Swish(trainable=False, beta=1.0)
     """
 
-    def __init__(self, learnable: bool = True, beta: float = 1.0) -> None:
+    def __init__(self, trainable: bool = True, beta: float = 1.0) -> None:
         super().__init__()
-        if learnable:
+        if trainable:
             self.beta = nn.Parameter(torch.tensor(beta))
         else:
             self.register_buffer("beta", torch.tensor(beta))
@@ -138,8 +139,13 @@ class PReLU(nn.Module):
         self.weight = nn.Parameter(torch.full((num_params,), init))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        w = self.weight.view([self.weight.size(0)] + [1] * (x.dim() - 1))
-        return torch.max(x, torch.tensor(0.0)) + w * torch.min(x, torch.tensor(0.0))
+        # Reshape weight for broadcasting on channel dim (dim=1)
+        shape = [1] * x.dim()
+        shape[1] = self.weight.size(0)
+        w = self.weight.view(shape)
+        pos = torch.clamp(x, min=0.0)
+        neg = torch.clamp(x, max=0.0)
+        return pos + w * neg
 
 
 class SEBlock(nn.Module):
@@ -199,7 +205,7 @@ class Activation(nn.Module):
     Example::
 
         act = Activation("mish")
-        act = Activation("swish", learnable=False, beta=1.0)
+        act = Activation("swish", trainable=False, beta=1.0)
         act = Activation("glu", dim=1)
         act = Activation("prelu", num_params=64)
         act = Activation("leakyrelu", alpha=0.01)
@@ -213,7 +219,7 @@ class Activation(nn.Module):
     | elu        | ELU         | alpha            |
     | celu       | CELU        | alpha            |
     | mish       | Mish        | (none)           |
-    | swish      | Swish       | learnable, beta  |
+    | swish      | Swish       | trainable, beta  |
     | silu       | SiLU        | (none)           |
     | gelu       | GELU        | (none)           |
     | glu        | GLU         | dim              |
@@ -230,7 +236,7 @@ class Activation(nn.Module):
         "elu": {"alpha"},
         "celu": {"alpha"},
         "mish": set(),
-        "swish": {"learnable", "beta"},
+        "swish": {"trainable", "beta"},
         "silu": set(),
         "gelu": set(),
         "glu": {"dim"},
@@ -272,9 +278,9 @@ class Activation(nn.Module):
         elif t == "mish":
             self.act = Mish()
         elif t == "swish":
-            learnable = kwargs.get("learnable", True)
+            trainable = kwargs.get("trainable", True)
             beta = kwargs.get("beta", 1.0)
-            self.act = Swish(learnable=learnable, beta=beta)
+            self.act = Swish(trainable=trainable, beta=beta)
         elif t == "silu":
             self.act = SiLU()
         elif t == "gelu":
@@ -293,7 +299,7 @@ class Activation(nn.Module):
         elif t == "hardtanh":
             min_val = kwargs.get("min_val", -1.0)
             max_val = kwargs.get("max_val", 1.0)
-            self.act = nn.Hardtanh(minval=min_val, maxval=max_val)
+            self.act = nn.Hardtanh(min_val=min_val, max_val=max_val)
         elif t == "hardswish":
             self.act = nn.Hardswish()
 

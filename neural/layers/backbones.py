@@ -163,7 +163,7 @@ class PretrainedBackbone(nn.Module):
             )
 
         self.name = name
-        self.output_layer = output_layer
+        self._output_layer = output_layer
         self.in_channels = in_channels
 
         # Load the model
@@ -204,7 +204,7 @@ class PretrainedBackbone(nn.Module):
             param.requires_grad = True
         self.frozen = False
 
-    def freeze(self) -> None:
+    def freeze_pretrained_layers(self) -> None:
         """Freeze pretrained conv/dense layers while keeping BN layers trainable.
 
         BatchNorm layers need running statistics to update during training.
@@ -215,9 +215,14 @@ class PretrainedBackbone(nn.Module):
                 continue
             for param in module.parameters():
                 param.requires_grad = False
+        # Ensure BN parameters stay trainable (parent module.parameters() includes them)
+        for module in self.model.modules():
+            if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+                for param in module.parameters():
+                    param.requires_grad = True
         self.frozen = True
 
-    def unfreeze(self) -> None:
+    def unfreeze_pretrained_layers(self) -> None:
         """Unfreeze pretrained conv/dense layers while keeping BN layers trainable.
 
         Only unfreezes feature-extraction layers; BN layers are left untouched
@@ -230,36 +235,52 @@ class PretrainedBackbone(nn.Module):
                 param.requires_grad = True
         self.frozen = False
 
+    @property
+    def output_layer(self) -> str:
+        return self._output_layer
+
+    @output_layer.setter
+    def output_layer(self, value: str) -> None:
+        if value not in _OUTPUT_LAYERS.get(self.name, []):
+            raise ValueError(
+                f"Unknown output_layer {value!r} for {self.name!r}. "
+                f"Choose from: {', '.join(_OUTPUT_LAYERS.get(self.name, []))}"
+            )
+        self._output_layer = value
+
     @staticmethod
     def _replace_first_conv(model: nn.Module, in_channels: int) -> nn.Module:
         """Replace first conv layer to accept different number of input channels."""
         if isinstance(model, models.ResNet):
             old_conv = model.conv1
             model.conv1 = nn.Conv2d(
-                in_channels, old_conv.out_channels, old_conv.kernel_size,
-                old_conv.stride, old_conv.padding, old_conv.dilation,
-                old_conv.bias is not None,
+                in_channels, old_conv.out_channels,
+                kernel_size=old_conv.kernel_size,
+                stride=old_conv.stride,
+                padding=old_conv.padding,
+                dilation=old_conv.dilation,
+                groups=old_conv.groups,
+                bias=old_conv.bias is not None,
+                padding_mode=old_conv.padding_mode,
             )
         elif isinstance(model, models.DenseNet):
             old_conv = model.features.conv0
             model.features.conv0 = nn.Conv2d(
-                in_channels, old_conv.out_channels, old_conv.kernel_size,
-                old_conv.stride, old_conv.padding, old_conv.dilation,
-                old_conv.bias is not None,
+                in_channels, old_conv.out_channels,
+                kernel_size=old_conv.kernel_size,
+                stride=old_conv.stride,
+                padding=old_conv.padding,
+                dilation=old_conv.dilation,
+                groups=old_conv.groups,
+                bias=old_conv.bias is not None,
+                padding_mode=old_conv.padding_mode,
             )
-        elif isinstance(model, models.EfficientNet):
+        elif isinstance(model, (models.EfficientNet, models.MobileNetV2)):
             old_conv = model.features[0][0]
             model.features[0][0] = nn.Conv2d(
                 in_channels, old_conv.out_channels, old_conv.kernel_size,
                 old_conv.stride, old_conv.padding, old_conv.dilation,
-                old_conv.bias is not None,
-            )
-        elif isinstance(model, models.MobileNetV2):
-            old_conv = model.features[0][0]
-            model.features[0][0] = nn.Conv2d(
-                in_channels, old_conv.out_channels, old_conv.kernel_size,
-                old_conv.stride, old_conv.padding, old_conv.dilation,
-                old_conv.bias is not None,
+                old_conv.groups, old_conv.bias is not None, old_conv.padding_mode,
             )
         elif isinstance(model, models.VGG):
             old_conv = model.features[0]
@@ -295,40 +316,52 @@ class PretrainedBackbone(nn.Module):
             return model.classifier.in_features
         elif output_layer == "avgpool":
             if isinstance(model, models.ResNet):
-                return model.avgpool.in_channels
-            elif isinstance(model, (models.EfficientNet, models.MobileNetV2)):
-                return model.features[-1][-1][0].out_channels
+                last = model.layer4[-1]
+                # ResNet-18/34 use BasicBlock (conv1+conv2), ResNet-50+ use Bottleneck (conv1+conv2+conv3)
+                if "BasicBlock" in type(last).__name__:
+                    return last.conv2.out_channels
+                else:
+                    return last.conv2.out_channels
+            elif isinstance(model, models.EfficientNet):
+                return model.classifier[-1].in_features
+            elif isinstance(model, models.MobileNetV2):
+                return model.classifier[-1].in_features
             elif isinstance(model, models.VGG):
-                return model.features[-1][0].out_channels
+                return model.classifier[1].in_features
             elif isinstance(model, models.DenseNet):
-                return model.features.norm5.num_features
+                return model.classifier.in_features
             elif isinstance(model, models.ConvNeXt):
-                return model.features[-1][0].out_channels
+                return model.classifier.in_features
             return 512
         elif output_layer == "features":
             if isinstance(model, models.EfficientNet):
-                return model.features[-1][-1][0].out_channels
+                return model.classifier[1].in_features
             elif isinstance(model, models.MobileNetV2):
-                return model.features[-1][-1][0].out_channels
+                return model.classifier[-1].in_features
             elif isinstance(model, models.VGG):
-                return model.features[-1][0].out_channels
+                return model.classifier[1].in_features
             elif isinstance(model, models.DenseNet):
-                return model.features.norm5.num_features
+                return model.classifier.in_features
             elif isinstance(model, models.ConvNeXt):
-                return model.features[-1][0].out_channels
+                return model.classifier.in_features
             return 512
         elif output_layer == "layer1":
             if isinstance(model, models.ResNet):
-                return model.layer1[-1].conv1.out_channels
+                return model.layer1[-1].conv2.out_channels
         elif output_layer == "layer2":
             if isinstance(model, models.ResNet):
-                return model.layer2[-1].conv1.out_channels
+                return model.layer2[-1].conv2.out_channels
         elif output_layer == "layer3":
             if isinstance(model, models.ResNet):
-                return model.layer3[-1].conv1.out_channels
+                return model.layer3[-1].conv2.out_channels
         elif output_layer == "layer4":
             if isinstance(model, models.ResNet):
-                return model.layer4[-1].conv1.out_channels
+                last = model.layer4[-1]
+                # ResNet-18/34 use BasicBlock, ResNet-50+ use Bottleneck
+                if type(last).__name__ == "BasicBlock":
+                    return last.conv2.out_channels
+                else:
+                    return last.conv2.out_channels
         return 512
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -355,41 +388,41 @@ class PretrainedBackbone(nn.Module):
             out["layer4"] = self.model.layer4(x)
             x = out["layer4"]
 
-            out["avgpool"] = self.model.avgpool(x)
-            out["fc"] = out["avgpool"].view(x.size(0), -1)
-            return out[self.output_layer]
+            out["avgpool"] = self.model.avgpool(x).flatten(1)
+            out["fc"] = out["avgpool"]
+            return out[self._output_layer]
 
         elif isinstance(self.model, models.EfficientNet):
             feats = self.model.features(x)
-            out = {"features": feats, "avgpool": self.model.avgpool(feats)}
-            out["classifier"] = out["avgpool"].flatten(1)
-            return out[self.output_layer]
+            out = {"features": feats, "avgpool": self.model.avgpool(feats).flatten(1)}
+            out["classifier"] = out["avgpool"]
+            return out[self._output_layer]
 
         elif isinstance(self.model, models.MobileNetV2):
             feats = self.model.features(x)
-            out = {"features": feats, "avgpool": self.model.avgpool(feats)}
-            out["classifier"] = out["avgpool"].flatten(1)
-            return out[self.output_layer]
+            out = {"features": feats, "avgpool": self.model.avgpool(feats).flatten(1)}
+            out["classifier"] = out["avgpool"]
+            return out[self._output_layer]
 
         elif isinstance(self.model, models.DenseNet):
             feats = self.model.features(x)
             feats = self.model.norm5(feats)
             feats = torch.relu(feats)
-            feats = torch.flatten(feats, 1)
-            out = {"features": feats, "classifier": self.model.classifier(feats)}
-            return out[self.output_layer]
+            feats_flat = torch.flatten(feats, 1)
+            out = {"features": feats_flat, "classifier": self.model.classifier(feats_flat)}
+            return out[self._output_layer]
 
         elif isinstance(self.model, models.VGG):
             feats = self.model.features(x)
-            out = {"features": feats, "avgpool": self.model.avgpool(feats)}
-            out["classifier"] = out["avgpool"].flatten(1)
-            return out[self.output_layer]
+            out = {"features": feats, "avgpool": self.model.avgpool(feats).flatten(1)}
+            out["classifier"] = out["avgpool"]
+            return out[self._output_layer]
 
         elif isinstance(self.model, models.ConvNeXt):
             feats = self.model.features(x)
-            out = {"features": feats, "avgpool": self.model.avgpool(feats)}
-            out["classifier"] = out["avgpool"].flatten(1)
-            return out[self.output_layer]
+            out = {"features": feats, "avgpool": self.model.avgpool(feats).flatten(1)}
+            out["classifier"] = out["avgpool"]
+            return out[self._output_layer]
 
         elif isinstance(self.model, models.SwinTransformer):
             # Swin outputs [B, H, W, C] -> flatten to [B, C]
@@ -397,6 +430,6 @@ class PretrainedBackbone(nn.Module):
             out = {"features": feats}
             out["avgpool"] = feats.mean(dim=[2, 3])
             out["classifier"] = self.model.head(out["avgpool"])
-            return out[self.output_layer]
+            return out[self._output_layer]
 
         raise NotImplementedError(f"Forward not implemented for model type: {type(self.model)}")

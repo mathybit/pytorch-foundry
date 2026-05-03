@@ -50,15 +50,22 @@ class MaskedAveragePooling(nn.Module):
         Returns:
             Pooled tensor (batch, embed_dim)
         """
-        mask = mask.unsqueeze(-1).float()
-        x = x * mask
+        # Build broadcast shape from mask dims to x dims by matching sizes
+        mask_shape = [1] * x.dim()
+        mi = 0
+        for i in range(x.dim()):
+            if mi < mask.dim() and mask.size(mi) == x.size(i):
+                mask_shape[i] = x.size(i)
+                mi += 1
+        mask_expanded = mask.view(mask_shape).float()
+        x = x * mask_expanded
 
-        summed = x.sum(dim=self.dim)
-        counts = mask.sum(dim=self.dim)
+        summed = x.sum(dim=self.dim, keepdim=True)
+        counts = mask_expanded.sum(dim=self.dim, keepdim=True)
         counts = torch.clamp(counts, min=self.eps)
         mean = summed / counts
 
-        return mean
+        return mean.squeeze(self.dim)
 
 
 class AttentionPooling(nn.Module):
@@ -201,8 +208,8 @@ class CrossChannelPooling2d(nn.Module):
     channel dimension, producing (N, 2, 1, 1) output.
 
     Parameters:
-        channels:  number of input channels (required when learnable=True).
-        learnable: if True, uses softmax-normalized learned weights instead
+        channels:  number of input channels (required when trainable=True).
+        trainable: if True, uses softmax-normalized learned weights instead
                    of uniform averaging across channels.
         eps:       numerical stability term for std computation.
 
@@ -219,26 +226,26 @@ class CrossChannelPooling2d(nn.Module):
         #   mean = 6.0, std ~ 4.0
         # ...etc
 
-    Output: [mean_channels, std_channels] concatenated -> (N, 2, 1, 1)
+    Output: [mean_channels, std_channels] concatenated -> (N, 2, H, W) for non-trainable, (N, 2, 1, 1) for trainable
     """
 
     def __init__(
         self,
         channels: int | None = None,
-        learnable: bool = False,
+        trainable: bool = False,
         eps: float = 1e-8,
     ) -> None:
         super().__init__()
-        self.learnable = learnable
+        self.trainable = trainable
         self.eps = eps
-        if learnable:
+        if trainable:
             if channels is None:
-                raise ValueError("channels is required when learnable=True")
+                raise ValueError("channels is required when trainable=True")
             self.weight = nn.Parameter(torch.zeros(channels))
         self.channels = channels
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.learnable:
+        if self.trainable:
             w = F.softmax(self.weight, dim=0)       # (C,)
             w = w.unsqueeze(1).unsqueeze(1)          # (C, 1, 1)
             mu = (x * w).sum(dim=1, keepdim=True)    # (N, 1, 1, 1)
@@ -246,9 +253,9 @@ class CrossChannelPooling2d(nn.Module):
             sigma = var.sqrt()
             return torch.cat([mu, sigma], dim=1)     # (N, 2, 1, 1)
 
-        mu = x.mean(dim=1, keepdim=True)    # (N, 1, 1, 1)
-        sigma = x.std(dim=1, keepdim=True)  # (N, 1, 1, 1)
-        return torch.cat([mu, sigma], dim=1)  # (N, 2, 1, 1)
+        mu = x.mean(dim=1, keepdim=True)     # (N, 1, H, W)
+        sigma = x.std(dim=1, keepdim=True)   # (N, 1, H, W)
+        return torch.cat([mu, sigma], dim=1)  # (N, 2, H, W)
 
 
 CrossChannelPool2d = CrossChannelPooling2d
