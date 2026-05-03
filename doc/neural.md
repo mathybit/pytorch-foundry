@@ -583,7 +583,77 @@ Architecture: `Linear -> activation -> dropout -> Linear(1)`. Supported activati
 
 ## Datasets
 
-Placeholder. This section will document the dataset classes available in `neural.datasets`.
+Two families of iterable datasets for PyTorch DataLoader integration: **Iterable** (single-pass, fixed-length) and **Streaming** (infinite cycle). Both support deterministic shuffling and automatic multi-worker data partitioning.
+
+### Iterable Datasets
+
+#### SingleWorkerIterableDataset
+
+Single-pass iteration over fixed data. One iteration = one full pass, then stops.
+
+```python
+from neural.datasets import SingleWorkerIterableDataset
+from torch.utils.data import DataLoader
+
+ds = SingleWorkerIterableDataset([1, 2, 3, 4, 5])
+for batch in DataLoader(ds, batch_size=2):
+    process(batch)  # [1,2] then [3,4] then [5]
+```
+
+Override `preprocess(point)` to transform samples; return `None` to filter.
+
+#### ShuffledIterableDataset
+
+Same as SingleWorkerIterableDataset with optional deterministic shuffling. Seed auto-increments per iteration for reproducible but varied shuffles.
+
+```python
+from neural.datasets import ShuffledIterableDataset
+
+ds = ShuffledIterableDataset(data, shuffle=True, seed=42)
+# First iteration: seed=42 -> 43
+# Second iteration: seed=43 -> 44
+```
+
+#### MultiWorkerIterableDataset
+
+Auto-partitions data across DataLoader workers via strided slicing. Worker 0 gets indices 0,4,8..., worker 1 gets 1,5,9..., etc.
+
+```python
+from neural.datasets import MultiWorkerIterableDataset
+
+ds = MultiWorkerIterableDataset(data, shuffle=True, seed=0)
+loader = DataLoader(ds, batch_size=32, num_workers=4)
+# Each worker gets a disjoint strided slice
+```
+
+### Streaming Datasets
+
+#### SingleWorkerStreamDataset
+
+Infinite stream via `while True: yield from` pattern. Default `preprocess` extracts (x, y) and converts to tensors.
+
+```python
+from neural.datasets import SingleWorkerStreamDataset
+
+ds = SingleWorkerStreamDataset([(x1, y1), (x2, y2), ...])
+for x, y in DataLoader(ds, batch_size=32):
+    train_step(x, y)  # runs forever
+```
+
+#### ShuffledStreamDataset
+
+Same as SingleWorkerStreamDataset with deterministic shuffling. Seed auto-increments each cycle.
+
+#### MultiWorkerStreamDataset
+
+Same as ShuffledStreamDataset with automatic multi-worker partitioning via `itertools.islice`.
+
+```python
+from neural.datasets import MultiWorkerStreamDataset
+
+ds = MultiWorkerStreamDataset([(i, 0) for i in range(100)], shuffle=True, seed=0)
+loader = DataLoader(ds, batch_size=32, num_workers=4)
+```
 
 [Back to top](#table-of-contents)
 
