@@ -1,8 +1,13 @@
 """Tests for neural.datasets classes."""
 
-import pytest
-import torch
 from collections.abc import Iterator
+from pathlib import Path
+import pytest
+import sys
+import torch
+
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from neural.datasets.iterable import (
     SingleWorkerIterableDataset,
@@ -13,6 +18,10 @@ from neural.datasets.streaming import (
     SingleWorkerStreamDataset,
     ShuffledStreamDataset,
     MultiWorkerStreamDataset,
+)
+from neural.datasets.inference import (
+    SingleWorkerInferenceDataset,
+    MultiWorkerInferenceDataset,
 )
 
 
@@ -273,3 +282,92 @@ class TestMultiWorkerStreamDataset:
         items = [next(stream) for _ in range(10)]
         assert len(items) == 10
         assert items[0] == (torch.tensor([0]), torch.tensor([0]))
+
+
+# ---------- Inference Datasets ---
+
+class TestSingleWorkerInferenceDataset:
+    def test_requires_preprocess(self):
+        ds = SingleWorkerInferenceDataset([1, 2, 3])
+        with pytest.raises(NotImplementedError):
+            list(ds)
+
+    def test_custom_preprocess(self):
+        class DS(SingleWorkerInferenceDataset):
+            def preprocess(self, point):
+                return torch.tensor([point * 2])
+        ds = DS([1, 2, 3])
+        items = list(ds)
+        assert len(items) == 3
+        assert items[0].item() == 2
+        assert items[1].item() == 4
+        assert items[2].item() == 6
+
+    def test_len(self):
+        ds = SingleWorkerInferenceDataset([1, 2, 3, 4])
+        assert len(ds) == 4
+
+    def test_multiple_iterations(self):
+        class DS(SingleWorkerInferenceDataset):
+            def preprocess(self, point):
+                return torch.tensor([point])
+        ds = DS([1, 2, 3])
+        a = list(ds)
+        b = list(ds)
+        assert [x.item() for x in a] == [x.item() for x in b] == [1, 2, 3]
+
+    def test_empty_data(self):
+        class DS(SingleWorkerInferenceDataset):
+            def preprocess(self, point):
+                return torch.tensor([point])
+        ds = DS([])
+        items = list(ds)
+        assert items == []
+
+    def test_get_stream(self):
+        class DS(SingleWorkerInferenceDataset):
+            def preprocess(self, point):
+                return torch.tensor([point])
+        ds = DS([10, 20])
+        stream = ds.get_stream()
+        assert isinstance(stream, Iterator)
+
+
+class TestMultiWorkerInferenceDataset:
+    def test_custom_preprocess(self):
+        class DS(MultiWorkerInferenceDataset):
+            def preprocess(self, point):
+                return torch.tensor([point * 3])
+        ds = DS([1, 2, 3, 4, 5])
+        items = list(ds)
+        assert len(items) == 5
+        assert items[0].item() == 3
+        assert items[4].item() == 15
+
+    def test_len(self):
+        ds = MultiWorkerInferenceDataset([1, 2, 3])
+        assert len(ds) == 3
+
+    def test_worker_detection_no_dataloader(self):
+        ds = MultiWorkerInferenceDataset([1, 2, 3])
+        ds.__iter__()
+        assert ds.multi is False
+        assert ds.worker_id == 0
+        assert ds.n_workers == 1
+
+    def test_multiple_iterations(self):
+        class DS(MultiWorkerInferenceDataset):
+            def preprocess(self, point):
+                return torch.tensor([point])
+        ds = DS([10, 20, 30])
+        a = list(ds)
+        b = list(ds)
+        assert [x.item() for x in a] == [x.item() for x in b] == [10, 20, 30]
+
+    def test_empty_data(self):
+        class DS(MultiWorkerInferenceDataset):
+            def preprocess(self, point):
+                return torch.tensor([point])
+        ds = DS([])
+        items = list(ds)
+        assert items == []

@@ -10,6 +10,10 @@ from neural.datasets.streaming import (
     ShuffledStreamDataset,
     MultiWorkerStreamDataset,
 )
+from neural.datasets.inference import (
+    SingleWorkerInferenceDataset,
+    MultiWorkerInferenceDataset,
+)
 
 __all__ = [
     'SingleWorkerIterableDataset',
@@ -18,4 +22,6 @@ __all__ = [
     'SingleWorkerStreamDataset',
     'ShuffledStreamDataset',
     'MultiWorkerStreamDataset',
+    'SingleWorkerInferenceDataset',
+    'MultiWorkerInferenceDataset',
 ]
