@@ -43,7 +43,7 @@ def _make_train_ds(tmp_path: Path) -> TrainDataset:
     csv_path = tmp_path / "episodes_reg_v1.csv"
     _write_csv(csv_path)
     _write_ids(tmp_path / "train.txt", ["ep_00", "ep_01", "ep_02", "ep_03", "ep_04"])
-    return TrainDataset(split_txt=tmp_path / "train.txt", csv_path=csv_path, shuffle=True, seed=42)
+    return TrainDataset(split_txt=tmp_path / "train.txt", csv_path=csv_path, shuffle=False, seed=None)
 
 
 def _make_test_ds(tmp_path: Path, n_ids: int = 3) -> TestDataset:
