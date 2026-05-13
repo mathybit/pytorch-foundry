@@ -53,10 +53,13 @@ SPLIT_RANDOM_SEED = 42
 # Model Architecture Configuration
 # ============================================================================
 MODEL_CONFIG_PARAMS = {
-    "d_input": 30,
+    "d_input": len(FEATURE_COLUMNS),
     "d_hidden": [128, 64, 32],
     "d_output": N_CLASSES,
     "dropout": 0.1,
+    "batch_norm": False,
+    "bn_affine": True,
+    "bn_track_running_stats": True,
     "activation": "relu",
 }
 
